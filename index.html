@@ -41,6 +41,51 @@
     const ArrowLeft = ({ size }) => <Icon size={size}><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></Icon>;
     const Trash2 = ({ size }) => <Icon size={size}><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></Icon>;
     const Undo = ({ size }) => <Icon size={size}><polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/></Icon>;
+    const Camera = ({ size }) => <Icon size={size}><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></Icon>;
+    const Play = ({ size }) => <Icon size={size}><polygon points="5 3 19 12 5 21 5 3"/></Icon>;
+    const Square = ({ size }) => <Icon size={size}><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/></Icon>;
+
+    // === IndexedDB helpers for videos ===
+    const videoDB = {
+      async open() {
+        return new Promise((resolve, reject) => {
+          const req = indexedDB.open('BeachVideos', 1);
+          req.onupgradeneeded = () => {
+            const db = req.result;
+            if (!db.objectStoreNames.contains('videos')) db.createObjectStore('videos', { keyPath: 'matchId' });
+          };
+          req.onsuccess = () => resolve(req.result);
+          req.onerror = () => reject(req.error);
+        });
+      },
+      async save(matchId, blob) {
+        const db = await this.open();
+        return new Promise((resolve, reject) => {
+          const tx = db.transaction('videos', 'readwrite');
+          tx.objectStore('videos').put({ matchId, blob, savedAt: Date.now() });
+          tx.oncomplete = () => resolve();
+          tx.onerror = () => reject(tx.error);
+        });
+      },
+      async get(matchId) {
+        const db = await this.open();
+        return new Promise((resolve, reject) => {
+          const tx = db.transaction('videos', 'readonly');
+          const req = tx.objectStore('videos').get(matchId);
+          req.onsuccess = () => resolve(req.result);
+          req.onerror = () => reject(req.error);
+        });
+      },
+      async delete(matchId) {
+        const db = await this.open();
+        return new Promise((resolve, reject) => {
+          const tx = db.transaction('videos', 'readwrite');
+          tx.objectStore('videos').delete(matchId);
+          tx.oncomplete = () => resolve();
+          tx.onerror = () => reject(tx.error);
+        });
+      },
+    };
 
     // Angriffs-Typen (Beach-spezifisch)
     const ATTACK_TYPES = [
@@ -63,6 +108,88 @@
       { id: 'r3', label: 'Perfekt', value: 3, color: 'from-green-500 to-emerald-600' },
       { id: 'r1', label: 'Im Feld', value: 1, color: 'from-amber-500 to-yellow-600' },
     ];
+
+    // === Video Player for Match History ===
+    function MatchVideoPlayer({ matchId, events, teamSnap }) {
+      const [videoUrl, setVideoUrl] = useState(null);
+      const [loading, setLoading] = useState(true);
+      const [error, setError] = useState('');
+      const videoEl = React.useRef(null);
+
+      useEffect(() => {
+        let mounted = true;
+        async function load() {
+          try {
+            const record = await videoDB.get(matchId);
+            if (record && record.blob && mounted) {
+              const url = URL.createObjectURL(record.blob);
+              setVideoUrl(url);
+            } else if (mounted) {
+              setError('Video nicht gefunden');
+            }
+          } catch (e) {
+            if (mounted) setError('Fehler beim Laden: ' + e.message);
+          }
+          if (mounted) setLoading(false);
+        }
+        load();
+        return () => { mounted = false; if (videoUrl) URL.revokeObjectURL(videoUrl); };
+      }, [matchId]);
+
+      const jumpTo = (seconds) => {
+        if (videoEl.current && seconds != null) {
+          videoEl.current.currentTime = Math.max(0, seconds - 3); // 3s before event
+          videoEl.current.play();
+        }
+      };
+
+      const deleteVideo = async () => {
+        if (!confirm('Video löschen? Die Event-Stats bleiben erhalten.')) return;
+        try { await videoDB.delete(matchId); setVideoUrl(null); } catch (e) {}
+      };
+
+      if (loading) return <div className="bg-white/95 rounded-2xl p-4 shadow-xl mb-3 text-center text-xs text-gray-500">🎬 Lade Video...</div>;
+      if (error || !videoUrl) return <div className="bg-yellow-100 border-2 border-yellow-400 rounded-2xl p-3 mb-3 text-xs text-yellow-800 text-center">🎬 {error || 'Kein Video verfügbar'}</div>;
+
+      const eventsWithTime = events.filter(e => e.videoTime != null);
+
+      return (
+        <div className="bg-white/95 rounded-2xl p-3 shadow-xl mb-3">
+          <div className="flex justify-between items-center mb-2">
+            <h3 className="font-black text-pink-700">🎬 Match-Video</h3>
+            <button onClick={deleteVideo} className="text-red-500 text-xs font-bold">🗑️ löschen</button>
+          </div>
+          <video ref={videoEl} src={videoUrl} controls playsInline className="w-full rounded-xl mb-2" />
+          {eventsWithTime.length > 0 && (
+            <>
+              <div className="text-xs font-bold text-gray-600 mb-1">📍 Zu Event springen:</div>
+              <div className="space-y-1 max-h-48 overflow-y-auto">
+                {eventsWithTime.map(e => {
+                  let label = '';
+                  if (e.type === 'attack') label = `⚔️ ${e.subtype}`;
+                  else if (e.type === 'serve') label = '🏐 Serve';
+                  else if (e.type === 'block') label = e.subtype === 'stuff' ? '💪 Stuff' : '✋ Touch';
+                  else if (e.type === 'reception') label = '📥 Annahme';
+                  else if (e.type === 'dig') label = '🛡️ Dig';
+                  else if (e.type === 'error') label = `❌ ${e.subtype}`;
+                  const outcomeEmoji = e.outcome === 'point_us' ? '🟢' : e.outcome === 'point_opp' ? '🔴' : '⚪';
+                  const playerName = e.player ? teamSnap[e.player]?.name : '—';
+                  const mins = Math.floor(e.videoTime / 60);
+                  const secs = e.videoTime % 60;
+                  return (
+                    <button key={e.id} onClick={() => jumpTo(e.videoTime)} className="w-full flex items-center gap-2 bg-gray-50 hover:bg-pink-50 rounded-lg px-2 py-1.5 text-xs active:scale-95">
+                      <span className="font-mono text-[10px] text-gray-500 w-10">{mins}:{secs.toString().padStart(2, '0')}</span>
+                      <span className="flex-1 text-left font-semibold">{outcomeEmoji} {label}</span>
+                      <span className="text-gray-500 text-[10px]">{playerName}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </>
+          )}
+        </div>
+      );
+    }
 
     function BeachTracker() {
       const [view, setView] = useState('home');
@@ -109,8 +236,63 @@
       const getSetLimit = (setNum) => setNum === 3 ? 15 : 21;
       const getSwitchEvery = (setNum) => setNum === 3 ? 5 : 7;
 
-      const startNewMatch = () => {
+      // === Video Recording ===
+      const startRecording = async () => {
+        try {
+          setRecordingError('');
+          const stream = await navigator.mediaDevices.getUserMedia({
+            video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'environment' },
+            audio: false,
+          });
+          setCameraStream(stream);
+
+          // Choose supported MIME type (iOS needs MP4, Android prefers WebM)
+          let mimeType = 'video/webm;codecs=vp9';
+          if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = 'video/webm;codecs=vp8';
+          if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = 'video/webm';
+          if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = 'video/mp4';
+          if (!MediaRecorder.isTypeSupported(mimeType)) { setRecordingError('Dein Browser unterstützt keine Video-Aufnahme'); return; }
+
+          recordedChunksRef.current = [];
+          const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 1500000 });
+          recorder.ondataavailable = (e) => { if (e.data.size > 0) recordedChunksRef.current.push(e.data); };
+          recorder.start(1000); // collect chunks every 1s
+          mediaRecorderRef.current = recorder;
+          setIsRecording(true);
+          setRecordingStart(Date.now());
+          return true;
+        } catch (err) {
+          setRecordingError('Kamera nicht verfügbar: ' + err.message);
+          return false;
+        }
+      };
+
+      const stopRecording = async () => {
+        return new Promise((resolve) => {
+          if (!mediaRecorderRef.current) { resolve(null); return; }
+          const recorder = mediaRecorderRef.current;
+          recorder.onstop = () => {
+            const blob = new Blob(recordedChunksRef.current, { type: recorder.mimeType });
+            if (cameraStream) cameraStream.getTracks().forEach(t => t.stop());
+            setCameraStream(null);
+            setIsRecording(false);
+            mediaRecorderRef.current = null;
+            resolve(blob);
+          };
+          recorder.stop();
+        });
+      };
+
+      // === Match start with optional recording ===
+      const startNewMatch = async () => {
         if (!opponentName.trim()) return;
+        let recStarted = false;
+        if (recordingEnabled) {
+          recStarted = await startRecording();
+          if (!recStarted) {
+            if (!confirm('Aufnahme fehlgeschlagen. Match ohne Video starten?')) return;
+          }
+        }
         const match = {
           id: Date.now().toString(),
           opponent: opponentName.trim(),
@@ -122,6 +304,8 @@
           opponentScore: 0,
           setScores: [],
           firstServe,
+          hasVideo: recStarted,
+          videoStartTime: recStarted ? Date.now() : null,
         };
         setCurrentMatch(match);
         setServingTeam(firstServe);
@@ -135,6 +319,7 @@
       const updateMatch = (fn) => setCurrentMatch(prev => fn(prev));
 
       const recordEvent = (details) => {
+        const videoTime = isRecording && recordingStart ? Math.floor((Date.now() - recordingStart) / 1000) : null;
         const event = {
           id: Date.now().toString() + Math.random(),
           set: currentMatch.set,
@@ -142,19 +327,14 @@
           teamScore: currentMatch.teamScore,
           opponentScore: currentMatch.opponentScore,
           timestamp: Date.now(),
+          videoTime, // seconds from video start
           ...details,
         };
 
         let teamDelta = 0, oppDelta = 0, newServing = servingTeam;
         const { outcome } = details;
-        if (outcome === 'point_us') {
-          teamDelta = 1;
-          newServing = 'us';
-        } else if (outcome === 'point_opp') {
-          oppDelta = 1;
-          newServing = 'opp';
-        }
-        // 'neutral' or 'continuation' = keine score change (e.g. reception good)
+        if (outcome === 'point_us') { teamDelta = 1; newServing = 'us'; }
+        else if (outcome === 'point_opp') { oppDelta = 1; newServing = 'opp'; }
 
         updateMatch(m => ({
           ...m,
@@ -165,6 +345,36 @@
         setServingTeam(newServing);
         setActionMode(null);
         setSelectedPlayer(null);
+      };
+
+      const finishMatch = async () => {
+        let videoBlob = null;
+        if (isRecording) {
+          videoBlob = await stopRecording();
+        }
+        const finalMatch = {
+          ...currentMatch,
+          setScores: [...currentMatch.setScores, { teamScore: currentMatch.teamScore, opponentScore: currentMatch.opponentScore }],
+          finished: true,
+        };
+        if (videoBlob) {
+          try { await videoDB.save(finalMatch.id, videoBlob); } catch (e) { console.error('Video save failed', e); }
+        }
+        await saveMatches([finalMatch, ...matches]);
+        setCurrentMatch(null);
+        setSelectedPlayer(null);
+        setActionMode(null);
+        setView('home');
+      };
+
+      const cancelMatch = async () => {
+        if (confirm('Spiel verwerfen?')) {
+          if (isRecording) await stopRecording();
+          setCurrentMatch(null);
+          setSelectedPlayer(null);
+          setActionMode(null);
+          setView('home');
+        }
       };
 
       const undoLastEvent = () => {
@@ -193,28 +403,6 @@
         setServingTeam('us');
         setActionMode(null);
         setSelectedPlayer(null);
-      };
-
-      const finishMatch = async () => {
-        const finalMatch = {
-          ...currentMatch,
-          setScores: [...currentMatch.setScores, { teamScore: currentMatch.teamScore, opponentScore: currentMatch.opponentScore }],
-          finished: true,
-        };
-        await saveMatches([finalMatch, ...matches]);
-        setCurrentMatch(null);
-        setSelectedPlayer(null);
-        setActionMode(null);
-        setView('home');
-      };
-
-      const cancelMatch = () => {
-        if (confirm('Spiel verwerfen?')) {
-          setCurrentMatch(null);
-          setSelectedPlayer(null);
-          setActionMode(null);
-          setView('home');
-        }
       };
 
       // Calculate stats
@@ -310,6 +498,15 @@
                     <button onClick={() => setFirstServe('us')} className={`p-3 rounded-2xl font-bold ${firstServe === 'us' ? 'bg-gradient-to-r from-cyan-600 to-sky-500 text-white' : 'bg-gray-100'}`}>🏐 Wir</button>
                     <button onClick={() => setFirstServe('opp')} className={`p-3 rounded-2xl font-bold ${firstServe === 'opp' ? 'bg-gradient-to-r from-orange-500 to-red-500 text-white' : 'bg-gray-100'}`}>🏐 Gegner</button>
                   </div>
+                </div>
+                <div className="mb-4">
+                  <label className="flex items-start gap-2 p-3 rounded-2xl bg-gradient-to-r from-pink-50 to-purple-50 border-2 border-pink-200 cursor-pointer">
+                    <input type="checkbox" checked={recordingEnabled} onChange={e => setRecordingEnabled(e.target.checked)} className="mt-0.5 w-5 h-5" />
+                    <div className="flex-1">
+                      <div className="font-bold text-sm text-pink-700">🎬 Video-Aufnahme aktivieren</div>
+                      <div className="text-[10px] text-gray-600 mt-0.5">App nimmt 720p auf & koppelt Events mit Zeitmarken. ⚠️ Akku-intensiv, Handy muss aktiv bleiben, ~2GB pro Stunde.</div>
+                    </div>
+                  </label>
                 </div>
                 <div className="flex gap-2">
                   <button onClick={() => { setShowNewMatch(false); setOpponentName(''); }} className="flex-1 bg-gray-200 p-3 rounded-2xl font-bold">Abbrechen</button>
@@ -427,7 +624,14 @@
               <div className="bg-white/95 rounded-2xl p-3 shadow-xl mb-3">
                 <div className="flex justify-between items-center mb-1">
                   <button onClick={cancelMatch} className="text-red-500 text-xs font-bold">✕ Ende</button>
-                  <div className="text-xs font-bold text-gray-500">SATZ {currentMatch.set} · bis {setLimit}</div>
+                  <div className="text-xs font-bold text-gray-500 flex items-center gap-2">
+                    SATZ {currentMatch.set} · bis {setLimit}
+                    {isRecording && (
+                      <button onClick={() => setCameraPreviewOpen(true)} className="flex items-center gap-1 bg-red-500 text-white px-1.5 py-0.5 rounded-full text-[9px] font-black animate-pulse">
+                        <span className="w-1.5 h-1.5 bg-white rounded-full"></span> REC
+                      </button>
+                    )}
+                  </div>
                   <button onClick={finishMatch} className="text-green-600 text-xs font-bold">✓ Fertig</button>
                 </div>
                 <div className="grid grid-cols-2 gap-3 mt-2">
@@ -637,6 +841,8 @@
                     </div>
                   ))}
                 </div>
+
+                {m.hasVideo && <MatchVideoPlayer matchId={m.id} events={m.events} teamSnap={teamSnap} />}
 
                 <div className="bg-white/95 rounded-2xl p-4 shadow-xl mb-3">
                   <h3 className="font-black text-cyan-700 mb-2">🎯 Sideout Stats</h3>
