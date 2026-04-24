@@ -1,4 +1,4 @@
-const CACHE_NAME = 'volleyball-coach-v5';
+const CACHE_NAME = 'volleyball-coach-v6';
 const urlsToCache = [
   './',
   './index.html',
