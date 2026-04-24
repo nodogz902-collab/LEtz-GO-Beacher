@@ -131,11 +131,14 @@
       return { sideoutsWon, sideoutOpps, sideoutPct, pointsScored, pointScoringOpps, pointScoringPct };
     }
 
-    // === Match Video Player ===
-    function MatchVideoPlayer({ matchId, events, teamSnap }) {
+    // === Match Video Player (with edit mode) ===
+    function MatchVideoPlayer({ matchId, events, setScores, teamSnap, onEventsChange, onSetScoresChange, editMode, onToggleEdit }) {
       const [videoUrl, setVideoUrl] = useState(null);
       const [loading, setLoading] = useState(true);
       const [error, setError] = useState('');
+      const [currentTime, setCurrentTime] = useState(0);
+      const [showSetScoreDialog, setShowSetScoreDialog] = useState(false);
+      const [draftScores, setDraftScores] = useState([]);
       const videoEl = useRef(null);
 
       useEffect(() => {
@@ -171,40 +174,241 @@
         try { await videoDB.delete(matchId); setVideoUrl(null); setError('Video gelöscht'); } catch (e) {}
       };
 
+      const handleEditClick = () => {
+        if (editMode) {
+          // Turning off edit mode - save & close
+          onToggleEdit();
+          return;
+        }
+        // Turning ON edit mode — first check if set scores exist, if not ask
+        const hasValidScores = setScores && setScores.length > 0 && setScores.some(s => s.teamScore > 0 || s.opponentScore > 0);
+        if (!hasValidScores) {
+          // Prompt for set scores
+          const initialScores = setScores && setScores.length > 0 ? setScores : [{ teamScore: 0, opponentScore: 0 }];
+          setDraftScores(initialScores);
+          setShowSetScoreDialog(true);
+        } else {
+          onToggleEdit();
+        }
+      };
+
+      const saveSetScores = () => {
+        // Filter out empty sets (both 0-0)
+        const cleaned = draftScores.filter(s => s.teamScore > 0 || s.opponentScore > 0);
+        if (cleaned.length === 0) {
+          alert('Bitte mindestens einen Satz-Stand eintragen.');
+          return;
+        }
+        onSetScoresChange(cleaned);
+        setShowSetScoreDialog(false);
+        onToggleEdit(); // Now enter edit mode
+      };
+
+      const updateDraftScore = (setIdx, team, value) => {
+        const newScores = [...draftScores];
+        if (!newScores[setIdx]) newScores[setIdx] = { teamScore: 0, opponentScore: 0 };
+        newScores[setIdx][team] = Math.max(0, parseInt(value) || 0);
+        setDraftScores(newScores);
+      };
+
+      const addSet = () => {
+        setDraftScores([...draftScores, { teamScore: 0, opponentScore: 0 }]);
+      };
+
+      const removeSet = (idx) => {
+        setDraftScores(draftScores.filter((_, i) => i !== idx));
+      };
+
+      const addEventAtTime = (details) => {
+        const videoTime = Math.floor(currentTime);
+        const event = {
+          id: Date.now().toString() + Math.random(),
+          set: 1,
+          serving: 'us',
+          teamScore: 0, opponentScore: 0,
+          timestamp: Date.now(), videoTime,
+          ...details,
+        };
+        const newEvents = [...events, event].sort((a, b) => (a.videoTime ?? 0) - (b.videoTime ?? 0));
+        onEventsChange(newEvents);
+      };
+
+      const deleteEvent = (eventId) => {
+        if (!confirm('Event löschen?')) return;
+        onEventsChange(events.filter(e => e.id !== eventId));
+      };
+
       if (loading) return <div className="bg-white/95 rounded-2xl p-4 shadow-xl mb-3 text-center text-xs text-gray-500">🎬 Lade Video...</div>;
       if (error || !videoUrl) return <div className="bg-yellow-100 border-2 border-yellow-400 rounded-2xl p-3 mb-3 text-xs text-yellow-800 text-center">🎬 {error || 'Kein Video'}</div>;
 
-      const eventsWithTime = events.filter(e => e.videoTime != null);
+      const eventsWithTime = events.filter(e => e.videoTime != null).sort((a, b) => a.videoTime - b.videoTime);
+      const mins = Math.floor(currentTime / 60);
+      const secs = Math.floor(currentTime % 60);
 
       return (
         <div className="bg-white/95 rounded-2xl p-3 shadow-xl mb-3">
           <div className="flex justify-between items-center mb-2">
             <h3 className="font-black text-pink-700">🎬 Match-Video</h3>
-            <button onClick={deleteVideo} className="text-red-500 text-xs font-bold">🗑️</button>
+            <div className="flex gap-2">
+              <button onClick={handleEditClick} className={`text-xs font-bold px-2 py-1 rounded-lg ${editMode ? 'bg-green-500 text-white' : 'bg-gray-200 text-gray-700'}`}>
+                {editMode ? '✓ Fertig' : '✏️ Bearbeiten'}
+              </button>
+              <button onClick={deleteVideo} className="text-red-500 text-xs font-bold">🗑️</button>
+            </div>
           </div>
-          <video ref={videoEl} src={videoUrl} controls playsInline className="w-full rounded-xl mb-2" />
+
+          <video
+            ref={videoEl}
+            src={videoUrl}
+            controls
+            playsInline
+            className="w-full rounded-xl mb-2"
+            onTimeUpdate={(e) => setCurrentTime(e.target.currentTime)}
+          />
+
+          {/* Set Score Dialog */}
+          {showSetScoreDialog && (
+            <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50">
+              <div className="bg-white rounded-3xl p-5 w-full max-w-sm shadow-2xl max-h-[90vh] overflow-y-auto">
+                <h2 className="text-xl font-black text-cyan-700 mb-2">📊 Satz-Ergebnisse</h2>
+                <p className="text-xs text-gray-600 mb-3">Trage die finalen Satz-Ergebnisse ein, bevor du mit dem Tracking im Video beginnst.</p>
+
+                <div className="space-y-2 mb-3">
+                  {draftScores.map((s, idx) => (
+                    <div key={idx} className="bg-gray-50 rounded-xl p-2">
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-xs font-bold text-gray-600">Satz {idx + 1}</span>
+                        {draftScores.length > 1 && (
+                          <button onClick={() => removeSet(idx)} className="text-red-500 text-xs">✕</button>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="flex-1">
+                          <div className="text-[10px] text-cyan-600 font-bold mb-0.5">WIR</div>
+                          <input
+                            type="number"
+                            inputMode="numeric"
+                            value={s.teamScore}
+                            onChange={e => updateDraftScore(idx, 'teamScore', e.target.value)}
+                            className="w-full p-2 border-2 border-cyan-200 rounded-lg text-center text-xl font-black focus:outline-none focus:border-cyan-500"
+                          />
+                        </div>
+                        <div className="text-gray-400 text-xl font-black mt-4">:</div>
+                        <div className="flex-1">
+                          <div className="text-[10px] text-orange-600 font-bold mb-0.5">GEGNER</div>
+                          <input
+                            type="number"
+                            inputMode="numeric"
+                            value={s.opponentScore}
+                            onChange={e => updateDraftScore(idx, 'opponentScore', e.target.value)}
+                            className="w-full p-2 border-2 border-orange-200 rounded-lg text-center text-xl font-black focus:outline-none focus:border-orange-500"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {draftScores.length < 5 && (
+                  <button onClick={addSet} className="w-full bg-gray-200 text-gray-700 p-2 rounded-xl font-bold text-sm mb-3">
+                    + Weiteren Satz hinzufügen
+                  </button>
+                )}
+
+                <div className="flex gap-2">
+                  <button onClick={() => setShowSetScoreDialog(false)} className="flex-1 bg-gray-200 p-3 rounded-2xl font-bold">Abbrechen</button>
+                  <button onClick={saveSetScores} className="flex-1 bg-gradient-to-r from-cyan-600 to-sky-500 text-white p-3 rounded-2xl font-bold">Weiter ✓</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {editMode && (
+            <div className="bg-gradient-to-r from-pink-50 to-purple-50 border-2 border-pink-300 rounded-xl p-2 mb-2">
+              <div className="text-[10px] font-bold text-pink-700 mb-1 flex items-center justify-between">
+                <span>✏️ EDIT-MODUS · Zeit: <span className="font-mono">{mins}:{secs.toString().padStart(2, '0')}</span></span>
+                <button onClick={() => { setDraftScores(setScores || []); setShowSetScoreDialog(true); }} className="text-[10px] bg-pink-200 text-pink-800 px-2 py-0.5 rounded-full">📊 Score ändern</button>
+              </div>
+              <div className="text-[10px] text-gray-600 mb-2">Pausiere das Video und tippe eine Aktion für den entsprechenden Spieler.</div>
+
+              <div className="grid grid-cols-2 gap-2">
+                {['blocker', 'defender'].map(role => {
+                  const isBlocker = role === 'blocker';
+                  const roleColor = isBlocker ? 'from-indigo-500 to-purple-600' : 'from-cyan-500 to-teal-600';
+                  const player = teamSnap[role];
+                  if (!player) return <div key={role} className="text-xs text-gray-500 text-center py-2">Kein {role}</div>;
+                  return (
+                    <div key={role} className="bg-white rounded-lg p-1.5">
+                      <div className={`bg-gradient-to-r ${roleColor} text-white rounded px-1.5 py-0.5 mb-1 flex items-center gap-1`}>
+                        <span className="text-xs">{isBlocker ? '🧱' : '🛡️'}</span>
+                        <span className="font-black text-[11px] truncate">{player.name}</span>
+                      </div>
+
+                      <div className="text-[9px] font-bold text-gray-500 mb-0.5">⚔️ Angriff</div>
+                      {ATTACK_TYPES.map(t => (
+                        <div key={t.id} className="flex gap-0.5 mb-0.5 items-center">
+                          <span className="text-[10px] flex-1 truncate">{t.emoji}{t.label}</span>
+                          <button onClick={() => addEventAtTime({ type: 'attack', subtype: t.id, player: role, outcome: 'point_us' })} className="bg-green-500 text-white text-[10px] font-black w-6 h-6 rounded active:scale-90">✓</button>
+                          <button onClick={() => addEventAtTime({ type: 'attack', subtype: t.id, player: role, outcome: 'point_opp' })} className="bg-red-500 text-white text-[10px] font-black w-6 h-6 rounded active:scale-90">✗</button>
+                          <button onClick={() => addEventAtTime({ type: 'attack', subtype: t.id, player: role, outcome: 'neutral' })} className="bg-gray-400 text-white text-[10px] font-black w-6 h-6 rounded active:scale-90">○</button>
+                        </div>
+                      ))}
+
+                      <div className="text-[9px] font-bold text-gray-500 mb-0.5 mt-1">🏐 Serve</div>
+                      <div className="grid grid-cols-3 gap-0.5 mb-1">
+                        <button onClick={() => addEventAtTime({ type: 'serve', player: role, outcome: 'point_us' })} className="bg-green-500 text-white text-[9px] font-black py-1 rounded active:scale-90">Ace</button>
+                        <button onClick={() => addEventAtTime({ type: 'serve', player: role, outcome: 'point_opp' })} className="bg-red-500 text-white text-[9px] font-black py-1 rounded active:scale-90">Err</button>
+                        <button onClick={() => addEventAtTime({ type: 'serve', player: role, outcome: 'neutral' })} className="bg-sky-500 text-white text-[9px] font-black py-1 rounded active:scale-90">○</button>
+                      </div>
+
+                      <div className="text-[9px] font-bold text-gray-500 mb-0.5">🧱 Block</div>
+                      <div className="grid grid-cols-2 gap-0.5 mb-1">
+                        <button onClick={() => addEventAtTime({ type: 'block', subtype: 'stuff', player: role, outcome: 'point_us' })} className="bg-green-500 text-white text-[9px] font-black py-1 rounded active:scale-90">Stuff</button>
+                        <button onClick={() => addEventAtTime({ type: 'block', subtype: 'touch', player: role, outcome: 'neutral' })} className="bg-amber-500 text-white text-[9px] font-black py-1 rounded active:scale-90">Touch</button>
+                      </div>
+
+                      <div className="text-[9px] font-bold text-gray-500 mb-0.5">📥 Annahme</div>
+                      <div className="grid grid-cols-3 gap-0.5">
+                        <button onClick={() => addEventAtTime({ type: 'reception', quality: 3, player: role, outcome: 'neutral' })} className="bg-green-500 text-white text-[9px] font-black py-1 rounded active:scale-90">Pfk</button>
+                        <button onClick={() => addEventAtTime({ type: 'reception', quality: 1, player: role, outcome: 'neutral' })} className="bg-amber-500 text-white text-[9px] font-black py-1 rounded active:scale-90">Feld</button>
+                        <button onClick={() => addEventAtTime({ type: 'reception', quality: -1, player: role, outcome: 'point_opp' })} className="bg-red-600 text-white text-[9px] font-black py-1 rounded active:scale-90">Err</button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {eventsWithTime.length > 0 && (
             <>
-              <div className="text-xs font-bold text-gray-600 mb-1">📍 Zu Event springen:</div>
-              <div className="space-y-1 max-h-48 overflow-y-auto">
+              <div className="text-xs font-bold text-gray-600 mb-1">📍 Events ({eventsWithTime.length}):</div>
+              <div className="space-y-1 max-h-64 overflow-y-auto">
                 {eventsWithTime.map(e => {
                   let label = '';
                   if (e.type === 'attack') label = `⚔️ ${e.subtype}`;
                   else if (e.type === 'serve') label = '🏐 Serve';
                   else if (e.type === 'block') label = e.subtype === 'stuff' ? '💪 Stuff' : '✋ Touch';
-                  else if (e.type === 'reception') label = '📥 Annahme';
+                  else if (e.type === 'reception') label = `📥 Annahme ${e.quality === 3 ? 'Pfk' : e.quality === 1 ? 'Feld' : 'Err'}`;
                   else if (e.type === 'dig') label = '🛡️ Dig';
                   else if (e.type === 'error') label = `❌ ${e.subtype}`;
                   const outcomeEmoji = e.outcome === 'point_us' ? '🟢' : e.outcome === 'point_opp' ? '🔴' : '⚪';
                   const playerName = e.player ? teamSnap[e.player]?.name : '—';
-                  const mins = Math.floor(e.videoTime / 60);
-                  const secs = e.videoTime % 60;
+                  const mins2 = Math.floor(e.videoTime / 60);
+                  const secs2 = e.videoTime % 60;
                   return (
-                    <button key={e.id} onClick={() => jumpTo(e.videoTime)} className="w-full flex items-center gap-2 bg-gray-50 hover:bg-pink-50 rounded-lg px-2 py-1.5 text-xs active:scale-95">
-                      <span className="font-mono text-[10px] text-gray-500 w-10">{mins}:{secs.toString().padStart(2, '0')}</span>
-                      <span className="flex-1 text-left font-semibold">{outcomeEmoji} {label}</span>
-                      <span className="text-gray-500 text-[10px]">{playerName}</span>
-                    </button>
+                    <div key={e.id} className="flex items-center gap-2 bg-gray-50 rounded-lg px-2 py-1.5 text-xs">
+                      <button onClick={() => jumpTo(e.videoTime)} className="flex-1 flex items-center gap-2 text-left active:scale-95">
+                        <span className="font-mono text-[10px] text-gray-500 w-10">{mins2}:{secs2.toString().padStart(2, '0')}</span>
+                        <span className="flex-1 font-semibold">{outcomeEmoji} {label}</span>
+                        <span className="text-gray-500 text-[10px]">{playerName}</span>
+                      </button>
+                      {editMode && (
+                        <button onClick={() => deleteEvent(e.id)} className="text-red-500 w-5 h-5 flex items-center justify-center active:scale-90">
+                          <Trash2 size={12} />
+                        </button>
+                      )}
+                    </div>
                   );
                 })}
               </div>
@@ -226,6 +430,7 @@
       const [opponentName, setOpponentName] = useState('');
       const [firstServe, setFirstServe] = useState('us');
       const [viewingMatch, setViewingMatch] = useState(null);
+      const [editingVideo, setEditingVideo] = useState(false);
       const [selectedPlayer, setSelectedPlayer] = useState(null);
       const [actionMode, setActionMode] = useState(null);
       const [servingTeam, setServingTeam] = useState('us');
@@ -740,7 +945,28 @@
                   ))}
                 </div>
 
-                {m.hasVideo && <MatchVideoPlayer matchId={m.id} events={m.events} teamSnap={teamSnap} />}
+                {m.hasVideo && (
+                  <MatchVideoPlayer
+                    matchId={m.id}
+                    events={m.events}
+                    setScores={m.setScores}
+                    teamSnap={teamSnap}
+                    editMode={editingVideo}
+                    onToggleEdit={() => setEditingVideo(!editingVideo)}
+                    onEventsChange={async (newEvents) => {
+                      const updatedMatch = { ...m, events: newEvents };
+                      const newMatches = matches.map(x => x.id === m.id ? updatedMatch : x);
+                      await saveMatches(newMatches);
+                      setViewingMatch(updatedMatch);
+                    }}
+                    onSetScoresChange={async (newSetScores) => {
+                      const updatedMatch = { ...m, setScores: newSetScores };
+                      const newMatches = matches.map(x => x.id === m.id ? updatedMatch : x);
+                      await saveMatches(newMatches);
+                      setViewingMatch(updatedMatch);
+                    }}
+                  />
+                )}
 
                 <div className="bg-white/95 rounded-2xl p-4 shadow-xl mb-3">
                   <h3 className="font-black text-cyan-700 mb-2">🎯 Sideout Stats</h3>
