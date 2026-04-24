@@ -92,6 +92,15 @@
       { id: 'line', label: 'Line', emoji: '📏' },
     ];
 
+    // Service zones: quadrants on our half of the court
+    // Looking from our side towards the net — our half is the bottom half
+    const SERVE_ZONES = [
+      { id: 'short_left', label: 'Kurz ⬅', shortLabel: 'K←', x: '25%', y: '30%' },
+      { id: 'short_right', label: 'Kurz ➡', shortLabel: 'K→', x: '75%', y: '30%' },
+      { id: 'long_left', label: 'Lang ⬅', shortLabel: 'L←', x: '25%', y: '70%' },
+      { id: 'long_right', label: 'Lang ➡', shortLabel: 'L→', x: '75%', y: '70%' },
+    ];
+
     const RECEPTION_QUALITY = [
       { id: 'r3', label: 'Perfekt', value: 3, color: 'from-green-500 to-emerald-600' },
       { id: 'r1', label: 'Im Feld', value: 1, color: 'from-amber-500 to-yellow-600' },
@@ -445,6 +454,9 @@
       const mediaRecorderRef = useRef(null);
       const recordedChunksRef = useRef([]);
 
+      // Zone picker for reception
+      const [pendingReception, setPendingReception] = useState(null); // { quality, player, outcome }
+
       useEffect(() => {
         async function load() {
           try { const t = await storage.get('team'); if (t) setTeam(JSON.parse(t.value)); } catch (e) {}
@@ -584,12 +596,47 @@
       };
 
       const finishMatch = async () => {
+        // Score consistency check: do event-derived points match the current scoreboard?
+        const finalSet = { teamScore: currentMatch.teamScore, opponentScore: currentMatch.opponentScore };
+        const allSets = [...currentMatch.setScores, finalSet];
+
+        // Count events per set that resulted in points
+        const eventsPerSet = {};
+        currentMatch.events.forEach(e => {
+          if (!eventsPerSet[e.set]) eventsPerSet[e.set] = { us: 0, opp: 0 };
+          if (e.outcome === 'point_us') eventsPerSet[e.set].us++;
+          if (e.outcome === 'point_opp') eventsPerSet[e.set].opp++;
+        });
+
+        // Check each set
+        const mismatches = [];
+        allSets.forEach((s, i) => {
+          const setNum = i + 1;
+          const evts = eventsPerSet[setNum] || { us: 0, opp: 0 };
+          const diffUs = s.teamScore - evts.us;
+          const diffOpp = s.opponentScore - evts.opp;
+          if (diffUs !== 0 || diffOpp !== 0) {
+            mismatches.push({ set: setNum, scoreboardUs: s.teamScore, scoreboardOpp: s.opponentScore, eventsUs: evts.us, eventsOpp: evts.opp, diffUs, diffOpp });
+          }
+        });
+
+        if (mismatches.length > 0) {
+          const msg = 'Achtung: Spielstand passt nicht zu den getrackten Events.\n\n' +
+            mismatches.map(m =>
+              `Satz ${m.set}: Anzeige ${m.scoreboardUs}:${m.scoreboardOpp}, aus Events berechnet ${m.eventsUs}:${m.eventsOpp}\n` +
+              `(Differenz: ${m.diffUs > 0 ? '+' : ''}${m.diffUs} uns / ${m.diffOpp > 0 ? '+' : ''}${m.diffOpp} Gegner)`
+            ).join('\n\n') +
+            '\n\nDas kommt vor wenn du +/- benutzt hast ohne Event zu tracken. Das ist ok - trotzdem beenden?';
+          if (!confirm(msg)) return;
+        }
+
         let videoBlob = null;
         if (isRecording) videoBlob = await stopRecording();
         const finalMatch = {
           ...currentMatch,
-          setScores: [...currentMatch.setScores, { teamScore: currentMatch.teamScore, opponentScore: currentMatch.opponentScore }],
+          setScores: [...currentMatch.setScores, finalSet],
           finished: true,
+          hasScoreMismatch: mismatches.length > 0,
         };
         if (videoBlob) { try { await videoDB.save(finalMatch.id, videoBlob); } catch (e) {} }
         await saveMatches([finalMatch, ...matches]);
@@ -849,10 +896,10 @@
                       <div className="text-[10px] font-bold text-gray-500 mb-1">📥 ANNAHME</div>
                       <div className="grid grid-cols-2 gap-1 mb-1">
                         {RECEPTION_QUALITY.map(q => (
-                          <button key={q.id} onClick={() => recordEvent({ type: 'reception', quality: q.value, player: role, outcome: 'neutral' })} className={`bg-gradient-to-br ${q.color} text-white text-[11px] font-black py-2 rounded-lg active:scale-90`}>{q.label}</button>
+                          <button key={q.id} onClick={() => setPendingReception({ type: 'reception', quality: q.value, player: role, outcome: 'neutral' })} className={`bg-gradient-to-br ${q.color} text-white text-[11px] font-black py-2 rounded-lg active:scale-90`}>{q.label}</button>
                         ))}
                       </div>
-                      <button onClick={() => recordEvent({ type: 'reception', quality: -1, player: role, outcome: 'point_opp' })} className="w-full bg-red-600 text-white text-[10px] font-black py-2 rounded-lg mb-2 active:scale-90">💀 Fehler</button>
+                      <button onClick={() => setPendingReception({ type: 'reception', quality: -1, player: role, outcome: 'point_opp' })} className="w-full bg-red-600 text-white text-[10px] font-black py-2 rounded-lg mb-2 active:scale-90">💀 Fehler</button>
 
                       <div className="text-[10px] font-bold text-gray-500 mb-1">🛡️ DIG</div>
                       <div className="grid grid-cols-2 gap-1 mb-2">
@@ -911,6 +958,53 @@
                     <span className="w-2 h-2 bg-white rounded-full"></span> LIVE
                   </div>
                   <button onClick={() => setCameraPreviewOpen(false)} className="absolute top-2 right-2 bg-white/90 text-gray-800 w-8 h-8 rounded-full font-black">✕</button>
+                </div>
+              </div>
+            )}
+
+            {/* Serve Zone Picker for Reception */}
+            {pendingReception && (
+              <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4">
+                <div className="bg-white rounded-3xl p-4 w-full max-w-sm shadow-2xl">
+                  <h2 className="text-lg font-black text-cyan-700 mb-1">🎯 Wo kam der Aufschlag hin?</h2>
+                  <p className="text-xs text-gray-600 mb-3">Tippe eine Zone auf eurer Hälfte — oder überspringe wenn nicht relevant.</p>
+
+                  {/* Court graphic */}
+                  <div className="relative bg-gradient-to-b from-amber-100 via-yellow-50 to-orange-100 rounded-xl h-64 border-2 border-orange-400 overflow-hidden mb-3">
+                    {/* Net line at top */}
+                    <div className="absolute top-0 left-0 right-0 h-1.5 bg-gray-700"></div>
+                    <div className="absolute top-2 left-0 right-0 text-center text-[10px] font-bold text-gray-600">— NETZ (Gegner serviert) —</div>
+
+                    {/* Center line */}
+                    <div className="absolute top-1/2 left-0 right-0 border-t border-dashed border-orange-300"></div>
+                    <div className="absolute left-1/2 top-[15%] bottom-0 border-l border-dashed border-orange-300"></div>
+
+                    {/* 4 Zones as buttons */}
+                    {SERVE_ZONES.map(z => (
+                      <button
+                        key={z.id}
+                        onClick={() => { recordEvent({ ...pendingReception, serveZone: z.id }); setPendingReception(null); }}
+                        className="absolute w-[45%] h-[40%] bg-gradient-to-br from-cyan-400/60 to-blue-500/60 border-2 border-white rounded-xl hover:from-cyan-500/80 hover:to-blue-600/80 active:scale-95 transition text-white font-black text-sm"
+                        style={{
+                          left: z.id.includes('left') ? '3%' : '52%',
+                          top: z.id.includes('short') ? '17%' : '57%',
+                        }}
+                      >
+                        <div className="flex flex-col items-center justify-center h-full">
+                          <div className="text-xs opacity-80">{z.id.includes('short') ? 'Kurz' : 'Lang'}</div>
+                          <div className="text-xl">{z.id.includes('left') ? '⬅' : '➡'}</div>
+                        </div>
+                      </button>
+                    ))}
+
+                    {/* Your side indicator */}
+                    <div className="absolute bottom-1 left-0 right-0 text-center text-[9px] font-bold text-gray-500">— eure Seite —</div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <button onClick={() => setPendingReception(null)} className="bg-gray-200 text-gray-700 p-2 rounded-xl font-bold text-sm">Abbrechen</button>
+                    <button onClick={() => { recordEvent(pendingReception); setPendingReception(null); }} className="bg-cyan-500 text-white p-2 rounded-xl font-bold text-sm">Ohne Zone ✓</button>
+                  </div>
                 </div>
               </div>
             )}
@@ -1049,6 +1143,44 @@
                     })}
                   </div>
                 </div>
+
+                {/* Serve Zone Heatmap */}
+                {m.events.some(e => e.type === 'reception' && e.serveZone) && (
+                  <div className="bg-white/95 rounded-2xl p-4 shadow-xl mt-3">
+                    <h3 className="font-black text-sky-700 mb-2">🎯 Gegner-Aufschlag Zonen</h3>
+                    <p className="text-xs text-gray-600 mb-2">Wohin der Gegner serviert hat</p>
+                    <div className="relative bg-gradient-to-b from-amber-100 to-orange-100 rounded-xl h-48 border-2 border-orange-400 overflow-hidden">
+                      <div className="absolute top-0 left-0 right-0 h-1 bg-gray-700"></div>
+                      <div className="absolute top-[50%] left-0 right-0 border-t border-dashed border-orange-300"></div>
+                      <div className="absolute left-[50%] top-0 bottom-0 border-l border-dashed border-orange-300"></div>
+                      {SERVE_ZONES.map(z => {
+                        const zoneEvents = m.events.filter(e => e.type === 'reception' && e.serveZone === z.id);
+                        const total = zoneEvents.length;
+                        const perfects = zoneEvents.filter(e => e.quality === 3).length;
+                        const errors = zoneEvents.filter(e => e.quality === -1).length;
+                        const totalReceptions = m.events.filter(e => e.type === 'reception' && e.serveZone).length;
+                        const pct = totalReceptions > 0 ? Math.round((total / totalReceptions) * 100) : 0;
+                        const opacity = totalReceptions > 0 ? 0.2 + (total / totalReceptions) * 0.7 : 0.2;
+                        return (
+                          <div
+                            key={z.id}
+                            className="absolute w-[45%] h-[45%] rounded-xl flex flex-col items-center justify-center text-white font-black text-xs border-2 border-white"
+                            style={{
+                              left: z.id.includes('left') ? '3%' : '52%',
+                              top: z.id.includes('short') ? '3%' : '52%',
+                              background: `rgba(14, 165, 233, ${opacity})`,
+                            }}
+                          >
+                            <div className="text-[10px] opacity-90">{z.id.includes('short') ? 'Kurz' : 'Lang'} {z.id.includes('left') ? '⬅' : '➡'}</div>
+                            <div className="text-2xl">{total}</div>
+                            <div className="text-[9px] opacity-90">{pct}%</div>
+                            {total > 0 && <div className="text-[8px] opacity-80">✓{perfects} ✗{errors}</div>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           );
