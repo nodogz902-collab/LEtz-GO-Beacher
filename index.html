@@ -441,9 +441,9 @@
                       </div>
                     </button>
                     <div className="flex items-center justify-between mt-1">
-                      <button onClick={() => recordEvent({ type: 'manual', outcome: 'point_opp', player: null })} className="bg-red-400 text-white w-9 h-9 rounded-full font-black text-lg active:scale-90 shadow">−</button>
+                      <button onClick={() => updateMatch(m => ({ ...m, teamScore: Math.max(0, m.teamScore - 1) }))} className="bg-red-400 text-white w-9 h-9 rounded-full font-black text-lg active:scale-90 shadow">−</button>
                       <div className={`text-5xl font-black ${teamClose ? 'text-orange-600 animate-pulse' : 'text-cyan-700'}`}>{currentMatch.teamScore}</div>
-                      <button onClick={() => recordEvent({ type: 'manual', outcome: 'point_us', player: null })} className="bg-green-500 text-white w-9 h-9 rounded-full font-black text-lg active:scale-90 shadow">+</button>
+                      <button onClick={() => updateMatch(m => ({ ...m, teamScore: m.teamScore + 1 }))} className="bg-green-500 text-white w-9 h-9 rounded-full font-black text-lg active:scale-90 shadow">+</button>
                     </div>
                   </div>
                   {/* GEGNER */}
@@ -454,9 +454,9 @@
                       </div>
                     </button>
                     <div className="flex items-center justify-between mt-1">
-                      <button onClick={() => recordEvent({ type: 'manual', outcome: 'point_us', player: null })} className="bg-red-400 text-white w-9 h-9 rounded-full font-black text-lg active:scale-90 shadow">−</button>
+                      <button onClick={() => updateMatch(m => ({ ...m, opponentScore: Math.max(0, m.opponentScore - 1) }))} className="bg-red-400 text-white w-9 h-9 rounded-full font-black text-lg active:scale-90 shadow">−</button>
                       <div className={`text-5xl font-black ${oppClose ? 'text-red-600 animate-pulse' : 'text-orange-600'}`}>{currentMatch.opponentScore}</div>
-                      <button onClick={() => recordEvent({ type: 'manual', outcome: 'point_opp', player: null })} className="bg-green-500 text-white w-9 h-9 rounded-full font-black text-lg active:scale-90 shadow">+</button>
+                      <button onClick={() => updateMatch(m => ({ ...m, opponentScore: m.opponentScore + 1 }))} className="bg-green-500 text-white w-9 h-9 rounded-full font-black text-lg active:scale-90 shadow">+</button>
                     </div>
                   </div>
                 </div>
@@ -512,14 +512,14 @@
                       <div className="text-[10px] font-bold text-gray-500 mb-1">⚔️ ANGRIFF</div>
                       <div className="space-y-1 mb-2">
                         {ATTACK_TYPES.map(t => (
-                          <div key={t.id} className="grid grid-cols-4 gap-1">
-                            <div className={`bg-gradient-to-br ${t.color} text-white rounded-lg flex items-center justify-center gap-0.5 py-1.5`}>
-                              <span className="text-sm">{t.emoji}</span>
-                              <span className="text-[10px] font-black">{t.label}</span>
+                          <div key={t.id} className="grid grid-cols-4 gap-1 items-center">
+                            <div className="flex items-center justify-center gap-1 py-1">
+                              <span className="text-base">{t.emoji}</span>
+                              <span className="text-[11px] font-bold text-gray-700">{t.label}</span>
                             </div>
-                            <button onClick={() => recordEvent({ type: 'attack', subtype: t.id, player: role, outcome: 'point_us' })} className="bg-green-500 text-white text-xs font-black py-1.5 rounded-lg active:scale-90">✓</button>
-                            <button onClick={() => recordEvent({ type: 'attack', subtype: t.id, player: role, outcome: 'point_opp' })} className="bg-red-500 text-white text-xs font-black py-1.5 rounded-lg active:scale-90">✗</button>
-                            <button onClick={() => recordEvent({ type: 'attack', subtype: t.id, player: role, outcome: 'neutral' })} className="bg-gray-400 text-white text-xs font-black py-1.5 rounded-lg active:scale-90">○</button>
+                            <button onClick={() => recordEvent({ type: 'attack', subtype: t.id, player: role, outcome: 'point_us' })} className="bg-green-500 text-white text-xs font-black py-1.5 rounded-lg active:scale-90 shadow">✓</button>
+                            <button onClick={() => recordEvent({ type: 'attack', subtype: t.id, player: role, outcome: 'point_opp' })} className="bg-red-500 text-white text-xs font-black py-1.5 rounded-lg active:scale-90 shadow">✗</button>
+                            <button onClick={() => recordEvent({ type: 'attack', subtype: t.id, player: role, outcome: 'neutral' })} className="bg-gray-400 text-white text-xs font-black py-1.5 rounded-lg active:scale-90 shadow">○</button>
                           </div>
                         ))}
                       </div>
