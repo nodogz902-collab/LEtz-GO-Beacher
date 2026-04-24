@@ -92,19 +92,56 @@
       { id: 'line', label: 'Line', emoji: '📏' },
     ];
 
-    // Service zones: quadrants on our half of the court
-    // Looking from our side towards the net — our half is the bottom half
     const SERVE_ZONES = [
-      { id: 'short_left', label: 'Kurz ⬅', shortLabel: 'K←', x: '25%', y: '30%' },
-      { id: 'short_right', label: 'Kurz ➡', shortLabel: 'K→', x: '75%', y: '30%' },
-      { id: 'long_left', label: 'Lang ⬅', shortLabel: 'L←', x: '25%', y: '70%' },
-      { id: 'long_right', label: 'Lang ➡', shortLabel: 'L→', x: '75%', y: '70%' },
+      { id: 'short_left', label: 'Kurz ⬅', x: '25%', y: '30%' },
+      { id: 'short_right', label: 'Kurz ➡', x: '75%', y: '30%' },
+      { id: 'long_left', label: 'Lang ⬅', x: '25%', y: '70%' },
+      { id: 'long_right', label: 'Lang ➡', x: '75%', y: '70%' },
     ];
 
     const RECEPTION_QUALITY = [
       { id: 'r3', label: 'Perfekt', value: 3, color: 'from-green-500 to-emerald-600' },
       { id: 'r1', label: 'Im Feld', value: 1, color: 'from-amber-500 to-yellow-600' },
     ];
+
+    // Reusable Zone Picker Modal
+    function ZonePicker({ onSelect, onSkip, onCancel }) {
+      return (
+        <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl p-4 w-full max-w-sm shadow-2xl">
+            <h2 className="text-lg font-black text-cyan-700 mb-1">🎯 Wo kam der Aufschlag hin?</h2>
+            <p className="text-xs text-gray-600 mb-3">Tippe eine Zone auf eurer Hälfte — oder überspringe wenn nicht relevant.</p>
+            <div className="relative bg-gradient-to-b from-amber-100 via-yellow-50 to-orange-100 rounded-xl h-64 border-2 border-orange-400 overflow-hidden mb-3">
+              <div className="absolute top-0 left-0 right-0 h-1.5 bg-gray-700"></div>
+              <div className="absolute top-2 left-0 right-0 text-center text-[10px] font-bold text-gray-600">— NETZ (Gegner serviert) —</div>
+              <div className="absolute top-1/2 left-0 right-0 border-t border-dashed border-orange-300"></div>
+              <div className="absolute left-1/2 top-[15%] bottom-0 border-l border-dashed border-orange-300"></div>
+              {SERVE_ZONES.map(z => (
+                <button
+                  key={z.id}
+                  onClick={() => onSelect(z.id)}
+                  className="absolute w-[45%] h-[40%] bg-gradient-to-br from-cyan-400/60 to-blue-500/60 border-2 border-white rounded-xl active:scale-95 transition text-white font-black text-sm"
+                  style={{
+                    left: z.id.includes('left') ? '3%' : '52%',
+                    top: z.id.includes('short') ? '17%' : '57%',
+                  }}
+                >
+                  <div className="flex flex-col items-center justify-center h-full">
+                    <div className="text-xs opacity-80">{z.id.includes('short') ? 'Kurz' : 'Lang'}</div>
+                    <div className="text-xl">{z.id.includes('left') ? '⬅' : '➡'}</div>
+                  </div>
+                </button>
+              ))}
+              <div className="absolute bottom-1 left-0 right-0 text-center text-[9px] font-bold text-gray-500">— eure Seite —</div>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <button onClick={onCancel} className="bg-gray-200 text-gray-700 p-2 rounded-xl font-bold text-sm">Abbrechen</button>
+              <button onClick={onSkip} className="bg-cyan-500 text-white p-2 rounded-xl font-bold text-sm">Ohne Zone ✓</button>
+            </div>
+          </div>
+        </div>
+      );
+    }
 
     function calcStats(events, playerRole = null) {
       const filtered = playerRole ? events.filter(e => e.player === playerRole) : events;
@@ -125,6 +162,22 @@
       const blocks = filtered.filter(e => e.type === 'block' && e.outcome === 'point_us').length;
       const digs = filtered.filter(e => e.type === 'dig').length;
       return { attackKills, attackErrors, attackTotal, attackPct, aces, serveErrors, recPerfect, recField, recError, recTotal, recAvg, blocks, digs };
+    }
+
+    function calcScoreConsistency(events, setScores) {
+      const result = [];
+      setScores.forEach((s, i) => {
+        const setNum = i + 1;
+        const setEvents = events.filter(e => e.set === setNum);
+        const pointUs = setEvents.filter(e => e.outcome === 'point_us').length;
+        const pointOpp = setEvents.filter(e => e.outcome === 'point_opp').length;
+        const softEvents = setEvents.filter(e => e.outcome === 'neutral').length;
+        const totalEvents = setEvents.length;
+        const diffUs = s.teamScore - pointUs;
+        const diffOpp = s.opponentScore - pointOpp;
+        result.push({ setNum, scoreUs: s.teamScore, scoreOpp: s.opponentScore, pointUs, pointOpp, softEvents, totalEvents, diffUs, diffOpp, ok: diffUs === 0 && diffOpp === 0 });
+      });
+      return result;
     }
 
     function calcSideoutStats(events) {
@@ -148,6 +201,7 @@
       const [currentTime, setCurrentTime] = useState(0);
       const [showSetScoreDialog, setShowSetScoreDialog] = useState(false);
       const [draftScores, setDraftScores] = useState([]);
+      const [pendingReception, setPendingReception] = useState(null); // { details } waiting for zone
       const videoEl = useRef(null);
 
       useEffect(() => {
@@ -184,15 +238,9 @@
       };
 
       const handleEditClick = () => {
-        if (editMode) {
-          // Turning off edit mode - save & close
-          onToggleEdit();
-          return;
-        }
-        // Turning ON edit mode — first check if set scores exist, if not ask
+        if (editMode) { onToggleEdit(); return; }
         const hasValidScores = setScores && setScores.length > 0 && setScores.some(s => s.teamScore > 0 || s.opponentScore > 0);
         if (!hasValidScores) {
-          // Prompt for set scores
           const initialScores = setScores && setScores.length > 0 ? setScores : [{ teamScore: 0, opponentScore: 0 }];
           setDraftScores(initialScores);
           setShowSetScoreDialog(true);
@@ -202,15 +250,11 @@
       };
 
       const saveSetScores = () => {
-        // Filter out empty sets (both 0-0)
         const cleaned = draftScores.filter(s => s.teamScore > 0 || s.opponentScore > 0);
-        if (cleaned.length === 0) {
-          alert('Bitte mindestens einen Satz-Stand eintragen.');
-          return;
-        }
+        if (cleaned.length === 0) { alert('Bitte mindestens einen Satz-Stand eintragen.'); return; }
         onSetScoresChange(cleaned);
         setShowSetScoreDialog(false);
-        onToggleEdit(); // Now enter edit mode
+        onToggleEdit();
       };
 
       const updateDraftScore = (setIdx, team, value) => {
@@ -220,26 +264,29 @@
         setDraftScores(newScores);
       };
 
-      const addSet = () => {
-        setDraftScores([...draftScores, { teamScore: 0, opponentScore: 0 }]);
-      };
+      const addSet = () => setDraftScores([...draftScores, { teamScore: 0, opponentScore: 0 }]);
+      const removeSet = (idx) => setDraftScores(draftScores.filter((_, i) => i !== idx));
 
-      const removeSet = (idx) => {
-        setDraftScores(draftScores.filter((_, i) => i !== idx));
-      };
-
-      const addEventAtTime = (details) => {
+      const commitEvent = (details) => {
         const videoTime = Math.floor(currentTime);
         const event = {
           id: Date.now().toString() + Math.random(),
-          set: 1,
-          serving: 'us',
+          set: 1, serving: 'us',
           teamScore: 0, opponentScore: 0,
           timestamp: Date.now(), videoTime,
           ...details,
         };
         const newEvents = [...events, event].sort((a, b) => (a.videoTime ?? 0) - (b.videoTime ?? 0));
         onEventsChange(newEvents);
+      };
+
+      // For reception: open zone picker first
+      const addReceptionAtTime = (details) => {
+        setPendingReception(details);
+      };
+
+      const addEventAtTime = (details) => {
+        commitEvent(details);
       };
 
       const deleteEvent = (eventId) => {
@@ -281,7 +328,6 @@
               <div className="bg-white rounded-3xl p-5 w-full max-w-sm shadow-2xl max-h-[90vh] overflow-y-auto">
                 <h2 className="text-xl font-black text-cyan-700 mb-2">📊 Satz-Ergebnisse</h2>
                 <p className="text-xs text-gray-600 mb-3">Trage die finalen Satz-Ergebnisse ein, bevor du mit dem Tracking im Video beginnst.</p>
-
                 <div className="space-y-2 mb-3">
                   {draftScores.map((s, idx) => (
                     <div key={idx} className="bg-gray-50 rounded-xl p-2">
@@ -294,36 +340,20 @@
                       <div className="flex items-center gap-2">
                         <div className="flex-1">
                           <div className="text-[10px] text-cyan-600 font-bold mb-0.5">WIR</div>
-                          <input
-                            type="number"
-                            inputMode="numeric"
-                            value={s.teamScore}
-                            onChange={e => updateDraftScore(idx, 'teamScore', e.target.value)}
-                            className="w-full p-2 border-2 border-cyan-200 rounded-lg text-center text-xl font-black focus:outline-none focus:border-cyan-500"
-                          />
+                          <input type="number" inputMode="numeric" value={s.teamScore} onChange={e => updateDraftScore(idx, 'teamScore', e.target.value)} className="w-full p-2 border-2 border-cyan-200 rounded-lg text-center text-xl font-black focus:outline-none focus:border-cyan-500" />
                         </div>
                         <div className="text-gray-400 text-xl font-black mt-4">:</div>
                         <div className="flex-1">
                           <div className="text-[10px] text-orange-600 font-bold mb-0.5">GEGNER</div>
-                          <input
-                            type="number"
-                            inputMode="numeric"
-                            value={s.opponentScore}
-                            onChange={e => updateDraftScore(idx, 'opponentScore', e.target.value)}
-                            className="w-full p-2 border-2 border-orange-200 rounded-lg text-center text-xl font-black focus:outline-none focus:border-orange-500"
-                          />
+                          <input type="number" inputMode="numeric" value={s.opponentScore} onChange={e => updateDraftScore(idx, 'opponentScore', e.target.value)} className="w-full p-2 border-2 border-orange-200 rounded-lg text-center text-xl font-black focus:outline-none focus:border-orange-500" />
                         </div>
                       </div>
                     </div>
                   ))}
                 </div>
-
                 {draftScores.length < 5 && (
-                  <button onClick={addSet} className="w-full bg-gray-200 text-gray-700 p-2 rounded-xl font-bold text-sm mb-3">
-                    + Weiteren Satz hinzufügen
-                  </button>
+                  <button onClick={addSet} className="w-full bg-gray-200 text-gray-700 p-2 rounded-xl font-bold text-sm mb-3">+ Weiteren Satz hinzufügen</button>
                 )}
-
                 <div className="flex gap-2">
                   <button onClick={() => setShowSetScoreDialog(false)} className="flex-1 bg-gray-200 p-3 rounded-2xl font-bold">Abbrechen</button>
                   <button onClick={saveSetScores} className="flex-1 bg-gradient-to-r from-cyan-600 to-sky-500 text-white p-3 rounded-2xl font-bold">Weiter ✓</button>
@@ -378,9 +408,9 @@
 
                       <div className="text-[9px] font-bold text-gray-500 mb-0.5">📥 Annahme</div>
                       <div className="grid grid-cols-3 gap-0.5">
-                        <button onClick={() => addEventAtTime({ type: 'reception', quality: 3, player: role, outcome: 'neutral' })} className="bg-green-500 text-white text-[9px] font-black py-1 rounded active:scale-90">Pfk</button>
-                        <button onClick={() => addEventAtTime({ type: 'reception', quality: 1, player: role, outcome: 'neutral' })} className="bg-amber-500 text-white text-[9px] font-black py-1 rounded active:scale-90">Feld</button>
-                        <button onClick={() => addEventAtTime({ type: 'reception', quality: -1, player: role, outcome: 'point_opp' })} className="bg-red-600 text-white text-[9px] font-black py-1 rounded active:scale-90">Err</button>
+                        <button onClick={() => addReceptionAtTime({ type: 'reception', quality: 3, player: role, outcome: 'neutral' })} className="bg-green-500 text-white text-[9px] font-black py-1 rounded active:scale-90">Pfk</button>
+                        <button onClick={() => addReceptionAtTime({ type: 'reception', quality: 1, player: role, outcome: 'neutral' })} className="bg-amber-500 text-white text-[9px] font-black py-1 rounded active:scale-90">Feld</button>
+                        <button onClick={() => addReceptionAtTime({ type: 'reception', quality: -1, player: role, outcome: 'point_opp' })} className="bg-red-600 text-white text-[9px] font-black py-1 rounded active:scale-90">Err</button>
                       </div>
                     </div>
                   );
@@ -398,7 +428,11 @@
                   if (e.type === 'attack') label = `⚔️ ${e.subtype}`;
                   else if (e.type === 'serve') label = '🏐 Serve';
                   else if (e.type === 'block') label = e.subtype === 'stuff' ? '💪 Stuff' : '✋ Touch';
-                  else if (e.type === 'reception') label = `📥 Annahme ${e.quality === 3 ? 'Pfk' : e.quality === 1 ? 'Feld' : 'Err'}`;
+                  else if (e.type === 'reception') {
+                    const q = e.quality === 3 ? 'Pfk' : e.quality === 1 ? 'Feld' : 'Err';
+                    const zone = e.serveZone ? ` · ${e.serveZone.includes('short') ? 'K' : 'L'}${e.serveZone.includes('left') ? '←' : '→'}` : '';
+                    label = `📥 Annahme ${q}${zone}`;
+                  }
                   else if (e.type === 'dig') label = '🛡️ Dig';
                   else if (e.type === 'error') label = `❌ ${e.subtype}`;
                   const outcomeEmoji = e.outcome === 'point_us' ? '🟢' : e.outcome === 'point_opp' ? '🔴' : '⚪';
@@ -423,6 +457,15 @@
               </div>
             </>
           )}
+
+          {/* Zone Picker for edit mode receptions */}
+          {pendingReception && (
+            <ZonePicker
+              onSelect={(zoneId) => { commitEvent({ ...pendingReception, serveZone: zoneId }); setPendingReception(null); }}
+              onSkip={() => { commitEvent(pendingReception); setPendingReception(null); }}
+              onCancel={() => setPendingReception(null)}
+            />
+          )}
         </div>
       );
     }
@@ -444,7 +487,6 @@
       const [actionMode, setActionMode] = useState(null);
       const [servingTeam, setServingTeam] = useState('us');
 
-      // Video recording state
       const [recordingEnabled, setRecordingEnabled] = useState(false);
       const [isRecording, setIsRecording] = useState(false);
       const [recordingStart, setRecordingStart] = useState(null);
@@ -454,8 +496,7 @@
       const mediaRecorderRef = useRef(null);
       const recordedChunksRef = useRef([]);
 
-      // Zone picker for reception
-      const [pendingReception, setPendingReception] = useState(null); // { quality, player, outcome }
+      const [pendingReception, setPendingReception] = useState(null);
 
       useEffect(() => {
         async function load() {
@@ -482,7 +523,6 @@
       const getSetLimit = (setNum) => setNum === 3 ? 15 : 21;
       const getSwitchEvery = (setNum) => setNum === 3 ? 5 : 7;
 
-      // Recording helpers
       const startRecording = async () => {
         try {
           setRecordingError('');
@@ -596,19 +636,14 @@
       };
 
       const finishMatch = async () => {
-        // Score consistency check: do event-derived points match the current scoreboard?
         const finalSet = { teamScore: currentMatch.teamScore, opponentScore: currentMatch.opponentScore };
         const allSets = [...currentMatch.setScores, finalSet];
-
-        // Count events per set that resulted in points
         const eventsPerSet = {};
         currentMatch.events.forEach(e => {
           if (!eventsPerSet[e.set]) eventsPerSet[e.set] = { us: 0, opp: 0 };
           if (e.outcome === 'point_us') eventsPerSet[e.set].us++;
           if (e.outcome === 'point_opp') eventsPerSet[e.set].opp++;
         });
-
-        // Check each set
         const mismatches = [];
         allSets.forEach((s, i) => {
           const setNum = i + 1;
@@ -619,7 +654,6 @@
             mismatches.push({ set: setNum, scoreboardUs: s.teamScore, scoreboardOpp: s.opponentScore, eventsUs: evts.us, eventsOpp: evts.opp, diffUs, diffOpp });
           }
         });
-
         if (mismatches.length > 0) {
           const msg = 'Achtung: Spielstand passt nicht zu den getrackten Events.\n\n' +
             mismatches.map(m =>
@@ -629,7 +663,6 @@
             '\n\nDas kommt vor wenn du +/- benutzt hast ohne Event zu tracken. Das ist ok - trotzdem beenden?';
           if (!confirm(msg)) return;
         }
-
         let videoBlob = null;
         if (isRecording) videoBlob = await stopRecording();
         const finalMatch = {
@@ -788,7 +821,6 @@
         return (
           <div className="min-h-screen bg-gradient-to-br from-cyan-500 via-sky-500 to-amber-400 p-3 pb-6">
             <div className="max-w-md mx-auto">
-              {/* Score */}
               <div className="bg-white/95 rounded-2xl p-3 shadow-xl mb-3">
                 <div className="flex justify-between items-center mb-1">
                   <button onClick={cancelMatch} className="text-red-500 text-xs font-bold">✕ Ende</button>
@@ -838,7 +870,6 @@
                 )}
               </div>
 
-              {/* Live Stats */}
               <div className="bg-white/95 rounded-2xl p-2 shadow-xl mb-3">
                 <div className="grid grid-cols-4 gap-1 text-center text-[10px]">
                   <div className="bg-cyan-100 p-1.5 rounded"><div className="font-black text-cyan-700">{sideoutStats.sideoutPct}%</div><div className="text-gray-600">Sideout</div></div>
@@ -852,7 +883,6 @@
                 <div className="bg-red-100 border-2 border-red-400 text-red-800 p-2 rounded-xl mb-2 text-xs font-bold">⚠️ {recordingError}</div>
               )}
 
-              {/* Two Player Columns */}
               <div className="grid grid-cols-2 gap-2 mb-3">
                 {['blocker', 'defender'].map(role => {
                   const player = teamSnap[role];
@@ -962,51 +992,13 @@
               </div>
             )}
 
-            {/* Serve Zone Picker for Reception */}
+            {/* Live Match Zone Picker */}
             {pendingReception && (
-              <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4">
-                <div className="bg-white rounded-3xl p-4 w-full max-w-sm shadow-2xl">
-                  <h2 className="text-lg font-black text-cyan-700 mb-1">🎯 Wo kam der Aufschlag hin?</h2>
-                  <p className="text-xs text-gray-600 mb-3">Tippe eine Zone auf eurer Hälfte — oder überspringe wenn nicht relevant.</p>
-
-                  {/* Court graphic */}
-                  <div className="relative bg-gradient-to-b from-amber-100 via-yellow-50 to-orange-100 rounded-xl h-64 border-2 border-orange-400 overflow-hidden mb-3">
-                    {/* Net line at top */}
-                    <div className="absolute top-0 left-0 right-0 h-1.5 bg-gray-700"></div>
-                    <div className="absolute top-2 left-0 right-0 text-center text-[10px] font-bold text-gray-600">— NETZ (Gegner serviert) —</div>
-
-                    {/* Center line */}
-                    <div className="absolute top-1/2 left-0 right-0 border-t border-dashed border-orange-300"></div>
-                    <div className="absolute left-1/2 top-[15%] bottom-0 border-l border-dashed border-orange-300"></div>
-
-                    {/* 4 Zones as buttons */}
-                    {SERVE_ZONES.map(z => (
-                      <button
-                        key={z.id}
-                        onClick={() => { recordEvent({ ...pendingReception, serveZone: z.id }); setPendingReception(null); }}
-                        className="absolute w-[45%] h-[40%] bg-gradient-to-br from-cyan-400/60 to-blue-500/60 border-2 border-white rounded-xl hover:from-cyan-500/80 hover:to-blue-600/80 active:scale-95 transition text-white font-black text-sm"
-                        style={{
-                          left: z.id.includes('left') ? '3%' : '52%',
-                          top: z.id.includes('short') ? '17%' : '57%',
-                        }}
-                      >
-                        <div className="flex flex-col items-center justify-center h-full">
-                          <div className="text-xs opacity-80">{z.id.includes('short') ? 'Kurz' : 'Lang'}</div>
-                          <div className="text-xl">{z.id.includes('left') ? '⬅' : '➡'}</div>
-                        </div>
-                      </button>
-                    ))}
-
-                    {/* Your side indicator */}
-                    <div className="absolute bottom-1 left-0 right-0 text-center text-[9px] font-bold text-gray-500">— eure Seite —</div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-2">
-                    <button onClick={() => setPendingReception(null)} className="bg-gray-200 text-gray-700 p-2 rounded-xl font-bold text-sm">Abbrechen</button>
-                    <button onClick={() => { recordEvent(pendingReception); setPendingReception(null); }} className="bg-cyan-500 text-white p-2 rounded-xl font-bold text-sm">Ohne Zone ✓</button>
-                  </div>
-                </div>
-              </div>
+              <ZonePicker
+                onSelect={(zoneId) => { recordEvent({ ...pendingReception, serveZone: zoneId }); setPendingReception(null); }}
+                onSkip={() => { recordEvent(pendingReception); setPendingReception(null); }}
+                onCancel={() => setPendingReception(null)}
+              />
             )}
           </div>
         );
@@ -1031,12 +1023,41 @@
 
                 <div className="bg-white/95 rounded-2xl p-4 shadow-xl mb-3">
                   <div className="text-xs text-gray-500 mb-2">{new Date(m.date).toLocaleDateString('de-DE')}</div>
-                  {m.setScores.map((s, i) => (
-                    <div key={i} className="flex justify-between font-bold">
-                      <span>Satz {i + 1}</span>
-                      <span className={s.teamScore > s.opponentScore ? 'text-green-600' : 'text-red-500'}>{s.teamScore} : {s.opponentScore}</span>
-                    </div>
-                  ))}
+                  {(() => {
+                    const consistency = calcScoreConsistency(m.events, m.setScores);
+                    return consistency.map((c, i) => (
+                      <div key={i} className={`mb-2 rounded-xl p-2 ${c.ok ? 'bg-green-50' : 'bg-red-50 border border-red-300'}`}>
+                        <div className="flex justify-between items-center mb-1.5">
+                          <span className="font-bold text-sm">Satz {c.setNum}</span>
+                          <span className={`font-black text-lg ${c.scoreUs > c.scoreOpp ? 'text-green-600' : 'text-red-500'}`}>{c.scoreUs} : {c.scoreOpp}</span>
+                        </div>
+                        {/* Event breakdown */}
+                        <div className="grid grid-cols-3 gap-1 text-center text-[10px] mb-1">
+                          <div className="bg-white/70 rounded-lg py-1 px-0.5">
+                            <div className="font-black text-cyan-700">{c.pointUs}</div>
+                            <div className="text-gray-500">🟢 Pkt. wir</div>
+                          </div>
+                          <div className="bg-white/70 rounded-lg py-1 px-0.5">
+                            <div className="font-black text-orange-600">{c.pointOpp}</div>
+                            <div className="text-gray-500">🔴 Pkt. Gegner</div>
+                          </div>
+                          <div className="bg-white/70 rounded-lg py-1 px-0.5">
+                            <div className="font-black text-gray-500">{c.softEvents}</div>
+                            <div className="text-gray-500">⚪ Soft</div>
+                          </div>
+                        </div>
+                        <div className="text-[10px] text-gray-400 text-right">
+                          {c.totalEvents} Events gesamt ({c.pointUs + c.pointOpp} Punkte-Events + {c.softEvents} Soft)
+                        </div>
+                        {!c.ok && (
+                          <div className="text-[10px] text-red-700 mt-1 font-bold">
+                            ⚠️ Differenz: {c.diffUs > 0 ? '+' : ''}{c.diffUs} wir / {c.diffOpp > 0 ? '+' : ''}{c.diffOpp} Gegner — Punkte via +/− ohne Event
+                          </div>
+                        )}
+                        {c.ok && <div className="text-[10px] text-green-600 font-bold mt-0.5">✓ Score konsistent</div>}
+                      </div>
+                    ));
+                  })()}
                 </div>
 
                 {m.hasVideo && (
@@ -1120,7 +1141,7 @@
                   </div>
                 ))}
 
-                <div className="bg-white/95 rounded-2xl p-4 shadow-xl">
+                <div className="bg-white/95 rounded-2xl p-4 shadow-xl mb-3">
                   <h3 className="font-black text-red-700 mb-2">⚔️ Attack-Typen</h3>
                   <div className="space-y-1">
                     {ATTACK_TYPES.map(t => {
@@ -1144,7 +1165,70 @@
                   </div>
                 </div>
 
-                {/* Serve Zone Heatmap */}
+                {/* Soft Stats: Annahme & Dig */}
+                <div className="bg-white/95 rounded-2xl p-4 shadow-xl mt-3">
+                  <h3 className="font-black text-teal-700 mb-3">🧘 Soft Stats</h3>
+                  {[
+                    { role: 'blocker', player: m.teamSnapshot.blocker, icon: '🧱' },
+                    { role: 'defender', player: m.teamSnapshot.defender, icon: '🛡️' },
+                  ].map(({ role, player, icon }) => {
+                    const recs = m.events.filter(e => e.type === 'reception' && e.player === role);
+                    const recPfk = recs.filter(e => e.quality === 3).length;
+                    const recFeld = recs.filter(e => e.quality === 1).length;
+                    const recErr = recs.filter(e => e.quality === -1).length;
+                    const recTotal = recs.length;
+                    const recAvg = recTotal > 0
+                      ? (recs.reduce((s, r) => s + Math.max(0, r.quality), 0) / recTotal).toFixed(2)
+                      : '—';
+                    const digs = m.events.filter(e => e.type === 'dig' && e.player === role);
+                    const digGood = digs.filter(e => e.quality === 'good').length;
+                    const digErr = digs.filter(e => e.quality === 'error').length;
+                    if (recTotal === 0 && digs.length === 0) return null;
+                    return (
+                      <div key={role} className="mb-3">
+                        <div className="flex items-center gap-1 mb-1">
+                          <span>{icon}</span>
+                          <span className="font-bold text-sm text-gray-700">{player?.name}</span>
+                        </div>
+                        {recTotal > 0 && (
+                          <div className="bg-green-50 rounded-xl p-2 mb-1">
+                            <div className="text-[10px] font-bold text-green-700 mb-1">📥 Annahme ({recTotal} gesamt · Ø {recAvg})</div>
+                            <div className="grid grid-cols-3 gap-1 text-center text-[11px]">
+                              <div className="bg-green-200 rounded-lg py-1">
+                                <div className="font-black text-green-800">{recPfk}</div>
+                                <div className="text-green-700">Perfekt</div>
+                              </div>
+                              <div className="bg-amber-100 rounded-lg py-1">
+                                <div className="font-black text-amber-700">{recFeld}</div>
+                                <div className="text-amber-600">Im Feld</div>
+                              </div>
+                              <div className="bg-red-100 rounded-lg py-1">
+                                <div className="font-black text-red-700">{recErr}</div>
+                                <div className="text-red-600">Fehler</div>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                        {digs.length > 0 && (
+                          <div className="bg-teal-50 rounded-xl p-2">
+                            <div className="text-[10px] font-bold text-teal-700 mb-1">🛡️ Dig ({digs.length} gesamt)</div>
+                            <div className="grid grid-cols-2 gap-1 text-center text-[11px]">
+                              <div className="bg-teal-200 rounded-lg py-1">
+                                <div className="font-black text-teal-800">{digGood}</div>
+                                <div className="text-teal-700">Gut</div>
+                              </div>
+                              <div className="bg-red-100 rounded-lg py-1">
+                                <div className="font-black text-red-700">{digErr}</div>
+                                <div className="text-red-600">Fehler</div>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+
                 {m.events.some(e => e.type === 'reception' && e.serveZone) && (
                   <div className="bg-white/95 rounded-2xl p-4 shadow-xl mt-3">
                     <h3 className="font-black text-sky-700 mb-2">🎯 Gegner-Aufschlag Zonen</h3>
