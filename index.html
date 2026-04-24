@@ -58,12 +58,10 @@
       { id: 'sky', label: 'Sky', emoji: '☁️', color: 'from-cyan-400 to-sky-500' },
     ];
 
-    // Reception-Qualität (Beach: 0-3 Skala)
+    // Reception-Qualität (vereinfacht)
     const RECEPTION_QUALITY = [
-      { id: 'r3', label: '3 Perfect', value: 3, color: 'from-green-500 to-emerald-600' },
-      { id: 'r2', label: '2 Gut', value: 2, color: 'from-lime-500 to-green-600' },
-      { id: 'r1', label: '1 Mittel', value: 1, color: 'from-amber-500 to-yellow-600' },
-      { id: 'r0', label: '0 Schlecht', value: 0, color: 'from-red-500 to-rose-600' },
+      { id: 'r3', label: 'Perfekt', value: 3, color: 'from-green-500 to-emerald-600' },
+      { id: 'r1', label: 'Im Feld', value: 1, color: 'from-amber-500 to-yellow-600' },
     ];
 
     function BeachTracker() {
@@ -512,14 +510,14 @@
                       <div className="text-[10px] font-bold text-gray-500 mb-1">⚔️ ANGRIFF</div>
                       <div className="space-y-1 mb-2">
                         {ATTACK_TYPES.map(t => (
-                          <div key={t.id} className="grid grid-cols-4 gap-1 items-center">
-                            <div className="flex items-center justify-center gap-1 py-1">
-                              <span className="text-base">{t.emoji}</span>
-                              <span className="text-[11px] font-bold text-gray-700">{t.label}</span>
+                          <div key={t.id} className="flex gap-1 items-center">
+                            <div className="flex items-center gap-1 py-1 flex-1 min-w-0">
+                              <span className="text-base flex-shrink-0">{t.emoji}</span>
+                              <span className="text-[11px] font-bold text-gray-700 truncate">{t.label}</span>
                             </div>
-                            <button onClick={() => recordEvent({ type: 'attack', subtype: t.id, player: role, outcome: 'point_us' })} className="bg-green-500 text-white text-xs font-black py-1.5 rounded-lg active:scale-90 shadow">✓</button>
-                            <button onClick={() => recordEvent({ type: 'attack', subtype: t.id, player: role, outcome: 'point_opp' })} className="bg-red-500 text-white text-xs font-black py-1.5 rounded-lg active:scale-90 shadow">✗</button>
-                            <button onClick={() => recordEvent({ type: 'attack', subtype: t.id, player: role, outcome: 'neutral' })} className="bg-gray-400 text-white text-xs font-black py-1.5 rounded-lg active:scale-90 shadow">○</button>
+                            <button onClick={() => recordEvent({ type: 'attack', subtype: t.id, player: role, outcome: 'point_us' })} className="bg-green-500 text-white text-xs font-black py-1.5 rounded-lg active:scale-90 shadow w-9 flex-shrink-0">✓</button>
+                            <button onClick={() => recordEvent({ type: 'attack', subtype: t.id, player: role, outcome: 'point_opp' })} className="bg-red-500 text-white text-xs font-black py-1.5 rounded-lg active:scale-90 shadow w-9 flex-shrink-0">✗</button>
+                            <button onClick={() => recordEvent({ type: 'attack', subtype: t.id, player: role, outcome: 'neutral' })} className="bg-gray-400 text-white text-xs font-black py-1.5 rounded-lg active:scale-90 shadow w-9 flex-shrink-0">○</button>
                           </div>
                         ))}
                       </div>
@@ -539,14 +537,14 @@
                         <button onClick={() => recordEvent({ type: 'block', subtype: 'touch', player: role, outcome: 'neutral' })} className="bg-gradient-to-br from-amber-500 to-orange-600 text-white text-[10px] font-black py-2 rounded-lg active:scale-90">✋ Touch</button>
                       </div>
 
-                      {/* Reception 0-3 */}
+                      {/* Reception: Perfekt / Im Feld / Fehler */}
                       <div className="text-[10px] font-bold text-gray-500 mb-1">📥 ANNAHME</div>
-                      <div className="grid grid-cols-4 gap-1 mb-1">
+                      <div className="grid grid-cols-2 gap-1 mb-1">
                         {RECEPTION_QUALITY.map(q => (
-                          <button key={q.id} onClick={() => recordEvent({ type: 'reception', quality: q.value, player: role, outcome: 'neutral' })} className={`bg-gradient-to-br ${q.color} text-white text-sm font-black py-2 rounded-lg active:scale-90`}>{q.value}</button>
+                          <button key={q.id} onClick={() => recordEvent({ type: 'reception', quality: q.value, player: role, outcome: 'neutral' })} className={`bg-gradient-to-br ${q.color} text-white text-[11px] font-black py-2 rounded-lg active:scale-90`}>{q.label}</button>
                         ))}
                       </div>
-                      <button onClick={() => recordEvent({ type: 'reception', quality: -1, player: role, outcome: 'point_opp' })} className="w-full bg-red-600 text-white text-[10px] font-bold py-1.5 rounded-lg mb-2 active:scale-90">💀 Rec. Error</button>
+                      <button onClick={() => recordEvent({ type: 'reception', quality: -1, player: role, outcome: 'point_opp' })} className="w-full bg-red-600 text-white text-[10px] font-black py-2 rounded-lg mb-2 active:scale-90">💀 Fehler</button>
 
                       {/* Dig */}
                       <div className="text-[10px] font-bold text-gray-500 mb-1">🛡️ DIG</div>
